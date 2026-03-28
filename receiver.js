@@ -27,11 +27,11 @@
     return media?.tracks || media?.mediaTracks || [];
   }
 
-  function findTrackBySubtitleAssetId(subtitleAssetId) {
+  function findTrackBySubtitleAssetId(subtitleAssetId, media = playerManager.getMediaInformation()) {
     if (!subtitleAssetId) {
       return null;
     }
-    return getMediaTracks(playerManager.getMediaInformation()).find((track) => {
+    return getMediaTracks(media).find((track) => {
       const customData = track?.customData || {};
       return customData.subtitleAssetId === subtitleAssetId;
     }) || null;
@@ -85,12 +85,12 @@
       const customData = loadRequestData?.media?.customData || {};
       const media = customData.media || {};
       syncState.currentMediaId = media.mediaId || loadRequestData?.media?.entity || loadRequestData?.media?.contentId || null;
-      syncState.queueIndex = loadRequestData?.currentTime != null ? loadRequestData?.queueData?.startIndex ?? syncState.queueIndex : syncState.queueIndex;
+      syncState.queueIndex = loadRequestData?.queueData?.startIndex ?? syncState.queueIndex;
       syncState.queueSize = loadRequestData?.queueData?.items?.length ?? syncState.queueSize;
 
       const defaultSubtitleAssetId = customData.defaultSubtitleAssetId || null;
       if ((loadRequestData.activeTrackIds == null || loadRequestData.activeTrackIds.length === 0) && defaultSubtitleAssetId) {
-        const matchingTrack = findTrackBySubtitleAssetId(defaultSubtitleAssetId);
+        const matchingTrack = findTrackBySubtitleAssetId(defaultSubtitleAssetId, loadRequestData?.media);
         if (matchingTrack) {
           loadRequestData.activeTrackIds = [matchingTrack.trackId];
         }
