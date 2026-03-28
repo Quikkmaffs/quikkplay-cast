@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <title>QuikkPlay Receiver</title>
+    <link rel="stylesheet" href="./receiver.css" />
+    <script
+      defer
+      src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"
+    ></script>
+    <script defer src="./receiver.js"></script>
+  </head>
+  <body>
+    <cast-media-player></cast-media-player>
+    <div class="receiver-badge">
+      <span class="receiver-badge__name">QuikkPlay</span>
+      <span class="receiver-badge__status" id="receiver-status">Ready</span>
+    </div>
+  </body>
+</html>
