@@ -154,6 +154,30 @@
     return media?.tracks || media?.mediaTracks || [];
   }
 
+  function getQueueItems(loadRequestData) {
+    return loadRequestData?.queueData?.items || [];
+  }
+
+  function getQueueStartIndex(loadRequestData) {
+    const queueItems = getQueueItems(loadRequestData);
+    const requestedIndex = loadRequestData?.queueData?.startIndex ?? 0;
+    if (queueItems.length === 0) {
+      return 0;
+    }
+    return Math.min(Math.max(requestedIndex, 0), queueItems.length - 1);
+  }
+
+  function resolveLoadMedia(loadRequestData) {
+    if (loadRequestData?.media) {
+      return loadRequestData.media;
+    }
+    const queueItems = getQueueItems(loadRequestData);
+    if (queueItems.length === 0) {
+      return null;
+    }
+    return queueItems[getQueueStartIndex(loadRequestData)]?.media || null;
+  }
+
   function findTrackBySubtitleAssetId(subtitleAssetId, media = playerManager.getMediaInformation()) {
     if (!subtitleAssetId) {
       return null;
@@ -211,25 +235,28 @@
     cast.framework.messages.MessageType.LOAD,
     (loadRequestData) => {
       try {
-        const customData = loadRequestData?.media?.customData || {};
+        const requestedMedia = resolveLoadMedia(loadRequestData);
+        const customData = requestedMedia?.customData || {};
         const media = customData.media || {};
-        syncState.currentMediaId = media.mediaId || loadRequestData?.media?.entity || loadRequestData?.media?.contentId || null;
-        syncState.queueIndex = loadRequestData?.queueData?.startIndex ?? syncState.queueIndex;
-        syncState.queueSize = loadRequestData?.queueData?.items?.length ?? syncState.queueSize;
+        const queueItems = getQueueItems(loadRequestData);
+        syncState.currentMediaId = media.mediaId || requestedMedia?.entity || requestedMedia?.contentId || null;
+        syncState.queueIndex = queueItems.length > 0 ? getQueueStartIndex(loadRequestData) : syncState.queueIndex;
+        syncState.queueSize = queueItems.length > 0 ? queueItems.length : syncState.queueSize;
         syncState.playbackState = "LOADING";
         updateScreenState();
         emitReceiverLog("info", "load_intercepted", {
           currentMediaId: syncState.currentMediaId,
-          contentId: loadRequestData?.media?.contentId || null,
-          contentUrl: loadRequestData?.media?.contentUrl || null,
-          contentType: loadRequestData?.media?.contentType || null,
+          contentId: requestedMedia?.contentId || null,
+          contentUrl: requestedMedia?.contentUrl || null,
+          contentType: requestedMedia?.contentType || null,
           queueIndex: syncState.queueIndex,
           queueSize: syncState.queueSize,
+          hasQueue: queueItems.length > 0,
         });
 
         const defaultSubtitleAssetId = customData.defaultSubtitleAssetId || null;
         if ((loadRequestData.activeTrackIds == null || loadRequestData.activeTrackIds.length === 0) && defaultSubtitleAssetId) {
-          const matchingTrack = findTrackBySubtitleAssetId(defaultSubtitleAssetId, loadRequestData?.media);
+          const matchingTrack = findTrackBySubtitleAssetId(defaultSubtitleAssetId, requestedMedia);
           if (matchingTrack) {
             loadRequestData.activeTrackIds = [matchingTrack.trackId];
           }
