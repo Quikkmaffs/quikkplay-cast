@@ -3,6 +3,8 @@
   const TYPE_SYNC_REQUEST = "SYNC_REQUEST";
   const TYPE_SET_SUBTITLE = "SET_SUBTITLE";
   const TYPE_STATE_SYNC = "STATE_SYNC";
+  const TYPE_RECEIVER_LOG = "RECEIVER_LOG";
+  const RECEIVER_LOG_TAG = "quikkplay_receiver";
   const statusElement = document.getElementById("receiver-status");
   const titleElement = document.getElementById("receiver-title");
   const detailElement = document.getElementById("receiver-detail");
@@ -11,6 +13,7 @@
   const context = cast.framework.CastReceiverContext.getInstance();
   const playerManager = context.getPlayerManager();
   const textTracksManager = playerManager.getTextTracksManager();
+  const debugLogger = cast.debug?.CastDebugLogger?.getInstance?.() || null;
 
   const syncState = {
     currentMediaId: null,
@@ -19,6 +22,73 @@
     queueSize: null,
     playbackState: "IDLE",
   };
+
+  if (debugLogger) {
+    debugLogger.setEnabled(true);
+    debugLogger.loggerLevelByEvents = {
+      "cast.framework.events.category.CORE": cast.framework.LoggerLevel.INFO,
+      "cast.framework.events.category.PLAYER": cast.framework.LoggerLevel.DEBUG,
+    };
+  }
+
+  function serializeLogDetails(details) {
+    if (details == null) {
+      return null;
+    }
+    if (typeof details === "string") {
+      return details;
+    }
+    try {
+      return JSON.stringify(details);
+    } catch (error) {
+      return String(details);
+    }
+  }
+
+  function emitReceiverLog(level, message, details = null) {
+    const normalizedLevel = ["debug", "info", "warn", "error"].includes(level) ? level : "info";
+    const serializedDetails = serializeLogDetails(details);
+    const debugMessage = serializedDetails ? `${message} ${serializedDetails}` : message;
+
+    if (debugLogger) {
+      switch (normalizedLevel) {
+        case "debug":
+          debugLogger.debug(RECEIVER_LOG_TAG, debugMessage);
+          break;
+        case "warn":
+          debugLogger.warn(RECEIVER_LOG_TAG, debugMessage);
+          break;
+        case "error":
+          debugLogger.error(RECEIVER_LOG_TAG, debugMessage);
+          break;
+        default:
+          debugLogger.info(RECEIVER_LOG_TAG, debugMessage);
+          break;
+      }
+    }
+
+    const consoleMethod =
+      normalizedLevel === "debug"
+        ? "log"
+        : normalizedLevel;
+    if (serializedDetails) {
+      console[consoleMethod]("[QuikkPlayReceiver]", message, serializedDetails);
+    } else {
+      console[consoleMethod]("[QuikkPlayReceiver]", message);
+    }
+
+    try {
+      context.sendCustomMessage(NAMESPACE, undefined, {
+        type: TYPE_RECEIVER_LOG,
+        level: normalizedLevel.toUpperCase(),
+        tag: RECEIVER_LOG_TAG,
+        message,
+        details: serializedDetails,
+      });
+    } catch (error) {
+      console.warn("[QuikkPlayReceiver]", "Failed to send receiver log", error);
+    }
+  }
 
   function setStatus(text) {
     if (statusElement) {
@@ -124,6 +194,7 @@
 
   context.addCustomMessageListener(NAMESPACE, (event) => {
     const message = event?.data || {};
+    emitReceiverLog("debug", "custom_message_received", { type: message.type || "UNKNOWN" });
     switch (message.type) {
       case TYPE_SYNC_REQUEST:
         broadcastState();
@@ -139,22 +210,38 @@
   playerManager.setMessageInterceptor(
     cast.framework.messages.MessageType.LOAD,
     (loadRequestData) => {
-      const customData = loadRequestData?.media?.customData || {};
-      const media = customData.media || {};
-      syncState.currentMediaId = media.mediaId || loadRequestData?.media?.entity || loadRequestData?.media?.contentId || null;
-      syncState.queueIndex = loadRequestData?.queueData?.startIndex ?? syncState.queueIndex;
-      syncState.queueSize = loadRequestData?.queueData?.items?.length ?? syncState.queueSize;
-      syncState.playbackState = "LOADING";
-      updateScreenState();
+      try {
+        const customData = loadRequestData?.media?.customData || {};
+        const media = customData.media || {};
+        syncState.currentMediaId = media.mediaId || loadRequestData?.media?.entity || loadRequestData?.media?.contentId || null;
+        syncState.queueIndex = loadRequestData?.queueData?.startIndex ?? syncState.queueIndex;
+        syncState.queueSize = loadRequestData?.queueData?.items?.length ?? syncState.queueSize;
+        syncState.playbackState = "LOADING";
+        updateScreenState();
+        emitReceiverLog("info", "load_intercepted", {
+          currentMediaId: syncState.currentMediaId,
+          contentId: loadRequestData?.media?.contentId || null,
+          contentUrl: loadRequestData?.media?.contentUrl || null,
+          contentType: loadRequestData?.media?.contentType || null,
+          queueIndex: syncState.queueIndex,
+          queueSize: syncState.queueSize,
+        });
 
-      const defaultSubtitleAssetId = customData.defaultSubtitleAssetId || null;
-      if ((loadRequestData.activeTrackIds == null || loadRequestData.activeTrackIds.length === 0) && defaultSubtitleAssetId) {
-        const matchingTrack = findTrackBySubtitleAssetId(defaultSubtitleAssetId, loadRequestData?.media);
-        if (matchingTrack) {
-          loadRequestData.activeTrackIds = [matchingTrack.trackId];
+        const defaultSubtitleAssetId = customData.defaultSubtitleAssetId || null;
+        if ((loadRequestData.activeTrackIds == null || loadRequestData.activeTrackIds.length === 0) && defaultSubtitleAssetId) {
+          const matchingTrack = findTrackBySubtitleAssetId(defaultSubtitleAssetId, loadRequestData?.media);
+          if (matchingTrack) {
+            loadRequestData.activeTrackIds = [matchingTrack.trackId];
+          }
         }
+        return loadRequestData;
+      } catch (error) {
+        emitReceiverLog("error", "load_interceptor_failed", {
+          message: error?.message || String(error),
+          stack: error?.stack || null,
+        });
+        throw error;
       }
-      return loadRequestData;
     }
   );
 
@@ -178,6 +265,13 @@
         syncState.queueIndex = queueManager.getCurrentItemIndex?.() ?? syncState.queueIndex;
         syncState.queueSize = queueManager.getItems?.().length ?? syncState.queueSize;
       }
+      emitReceiverLog("debug", "player_event", {
+        eventType,
+        playerState: syncState.playbackState,
+        currentMediaId: syncState.currentMediaId,
+        queueIndex: syncState.queueIndex,
+        queueSize: syncState.queueSize,
+      });
       updateScreenState();
       if (eventType !== cast.framework.events.EventType.TIME_UPDATE) {
         broadcastState();
@@ -185,7 +279,23 @@
     });
   });
 
+  window.addEventListener("error", (event) => {
+    emitReceiverLog("error", "window_error", {
+      message: event.message,
+      fileName: event.filename,
+      lineNumber: event.lineno,
+      columnNumber: event.colno,
+    });
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    emitReceiverLog("error", "unhandled_rejection", {
+      reason: serializeLogDetails(event.reason),
+    });
+  });
+
   updateScreenState();
+  emitReceiverLog("info", "receiver_initialized");
 
   context.start({
     disableIdleTimeout: true,
